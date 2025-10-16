@@ -1,9 +1,10 @@
 #ifndef OLOG_H
 #define OLOG_H
 
-#include <stdio.h>
-#include <time.h>
-#include <string.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <bits/pthreadtypes.h>
 #include <pthread.h>
 
@@ -27,12 +28,18 @@ void
 olog_set_cntxt(const enum Olog_Cntxt);
 
 void
-olog_msg(const char *);
+olog(const char *, ...);
+
+#define olog_msg(fmt, ...) olog(fmt, ##__VA_ARGS__)
 
 void
 olog_flush();
 
 void
 olog_close();
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
