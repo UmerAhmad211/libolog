@@ -8,6 +8,7 @@ const c_flags = [_][]const u8{
     "-Wextra",
     "-Werror",
     "-fPIC",
+    "-std=c11",
 };
 
 pub fn build(b: *std.Build) void {
