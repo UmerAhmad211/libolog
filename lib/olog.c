@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <time.h>
+#include <stdarg.h>
+#include <stdatomic.h>
 
 /*
  * ctime is guranteed to always 
@@ -12,47 +14,47 @@
  */
 #define CTIME_SZ 25
 #define DELIMS_SZ 8
-#define BUF_SZ 4096
+#define TOTAL_BUF_SZ 8192
 #define FLUSH_WAIT_TM 2
 #define FMT_STYLE "[ %s ] %s : %s"
 
 static enum Olog_Cntxt curr_lvl = info;
-static FILE *olog_file = NULL;
-static alignas(BUF_SZ) char olog_buf[BUF_SZ];
-static size_t olog_offset = 0;
-static time_t lst_flush_tm = 0;
+static FILE *file = NULL;
+static alignas(TOTAL_BUF_SZ) char olog_buf[TOTAL_BUF_SZ];
+static size_t buf_offset = 0;
+static time_t last_flush_tm = 0;
 static const char *str_of_lvls[] = { "DEBUG", "INFO", "WARNING", "ERROR" };
 static size_t lvls_lens[] = { 5, 4, 7, 5 };
-static pthread_mutex_t olog_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void
-olog_init(const char *olog_file_path)
+olog_init(const char *file_path)
 {
-	if (!(olog_file = fopen(olog_file_path, "w")))
-		olog_file = stdout;
+	if (!(file = fopen(file_path, "w")))
+		file = stdout;
 
-	lst_flush_tm = time(NULL);
+	last_flush_tm = time(NULL);
 }
 
 void
 olog_flush()
 {
-	if (olog_offset == 0)
+	if (buf_offset == 0)
 		return;
-	fwrite(olog_buf, sizeof(char), olog_offset, olog_file);
-	fflush(olog_file);
-	olog_offset = 0;
-	lst_flush_tm = time(NULL);
+	fwrite(olog_buf, sizeof(char), buf_offset, file);
+	fflush(file);
+	buf_offset = 0;
+	last_flush_tm = time(NULL);
 }
 
 void
 olog_close()
 {
-	pthread_mutex_lock(&olog_mutex);
+	pthread_mutex_lock(&mutex);
 	olog_flush();
-	pthread_mutex_unlock(&olog_mutex);
-	if (olog_file != stdout || olog_file != stderr)
-		fclose(olog_file);
+	pthread_mutex_unlock(&mutex);
+	if (file != stdout || file != stderr)
+		fclose(file);
 }
 
 void
@@ -62,29 +64,40 @@ olog_set_cntxt(const enum Olog_Cntxt lvl)
 }
 
 void
-olog_msg(const char *msg)
+olog(const char *fmt, ...)
 {
-	if (!msg || !olog_file)
+	if (!fmt || !file)
 		return;
 
 	time_t now = time(NULL);
 
-	pthread_mutex_lock(&olog_mutex);
+	pthread_mutex_lock(&mutex);
 
-	if (strlen(msg) + CTIME_SZ + lvls_lens[curr_lvl] + DELIMS_SZ >=
-	    BUF_SZ - olog_offset)
-		OLOG_FMT(FMT_STYLE, olog_file, , str_of_lvls[curr_lvl], msg,
-			 ctime(&now));
-	else {
-		int len = snprintf(olog_buf + olog_offset, BUF_SZ - olog_offset,
-				   FMT_STYLE, str_of_lvls[curr_lvl], msg,
-				   ctime(&now));
-		if (!(len < 0))
-			olog_offset += len;
-	}
+	va_list args;
+	va_start(args, fmt);
 
-	if (difftime(now, lst_flush_tm) >= FLUSH_WAIT_TM)
+#define MSG_BUF_SZ 256
+
+	char msg_buf[MSG_BUF_SZ];
+	int fmt_len = vsnprintf(msg_buf, MSG_BUF_SZ, fmt, args);
+	if (fmt_len < 0)
+		return;
+	va_end(args);
+
+	if (sizeof(msg_buf) + CTIME_SZ + lvls_lens[curr_lvl] + DELIMS_SZ >=
+	    TOTAL_BUF_SZ - buf_offset)
 		olog_flush();
 
-	pthread_mutex_unlock(&olog_mutex);
+	int msg_len = snprintf(olog_buf + buf_offset, TOTAL_BUF_SZ - buf_offset,
+			       FMT_STYLE, str_of_lvls[curr_lvl], msg_buf,
+			       ctime(&now));
+	if (msg_len < 0)
+		return;
+	else
+		buf_offset += msg_len;
+
+	if (difftime(now, last_flush_tm) >= FLUSH_WAIT_TM)
+		olog_flush();
+
+	pthread_mutex_unlock(&mutex);
 }
