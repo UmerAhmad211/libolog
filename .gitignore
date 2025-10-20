@@ -4,7 +4,7 @@ zig-out/
 lib/.clangd
 .env
 examples/example.txt
-foo 
-mth
-mth.cpp
-thrd
+examples/foo 
+examples/mth
+examples/mth.cpp
+examples/thrd
