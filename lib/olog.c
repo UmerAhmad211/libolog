@@ -64,7 +64,7 @@ olog_set_cntxt(const enum Olog_Cntxt lvl)
 }
 
 void
-olog(const char *fmt, ...)
+olog(size_t buf_len, const char *fmt, ...)
 {
 	if (!fmt || !file)
 		return;
@@ -76,10 +76,8 @@ olog(const char *fmt, ...)
 	va_list args;
 	va_start(args, fmt);
 
-#define MSG_BUF_SZ 256
-
-	char msg_buf[MSG_BUF_SZ];
-	int fmt_len = vsnprintf(msg_buf, MSG_BUF_SZ, fmt, args);
+	char msg_buf[buf_len];
+	int fmt_len = vsnprintf(msg_buf, buf_len, fmt, args);
 	if (fmt_len < 0)
 		return;
 	va_end(args);
