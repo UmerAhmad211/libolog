@@ -4,6 +4,7 @@
 #include <bits/pthreadtypes.h>
 #include <pthread.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #ifdef __cplusplus
@@ -30,6 +31,9 @@ enum Olog_Cntxt {
 
 void
 olog_init(const char *);
+
+void
+olog_init_unmanaged(FILE *);
 
 void
 olog_set_cntxt(const enum Olog_Cntxt);
