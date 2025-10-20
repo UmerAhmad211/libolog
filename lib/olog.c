@@ -26,6 +26,7 @@ static time_t last_flush_tm = 0;
 static const char *str_of_lvls[] = { "DEBUG", "INFO", "WARNING", "ERROR" };
 static size_t lvls_lens[] = { 5, 4, 7, 5 };
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static _Bool unmanaged = 0;
 
 void
 olog_init(const char *file_path)
@@ -33,6 +34,14 @@ olog_init(const char *file_path)
 	if (!(file = fopen(file_path, "w")))
 		file = stdout;
 
+	last_flush_tm = time(NULL);
+}
+
+void
+olog_init_unmanaged(FILE *filep)
+{
+	file = filep;
+	unmanaged = 1;
 	last_flush_tm = time(NULL);
 }
 
@@ -53,7 +62,7 @@ olog_close()
 	pthread_mutex_lock(&mutex);
 	olog_flush();
 	pthread_mutex_unlock(&mutex);
-	if (file != stdout || file != stderr)
+	if ((file != stdout || file != stderr) && !unmanaged)
 		fclose(file);
 }
 
