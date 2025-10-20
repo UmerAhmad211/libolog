@@ -1,6 +1,10 @@
 zig-out/
 .zig-cache/
 .clangd
-examples/
 lib/.clangd
 .env
+examples/example.txt
+foo 
+mth
+mth.cpp
+thrd
