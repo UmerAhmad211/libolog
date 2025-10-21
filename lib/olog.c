@@ -20,7 +20,7 @@
 
 static enum Olog_Cntxt curr_lvl = info;
 static FILE *file = NULL;
-static alignas(TOTAL_BUF_SZ) char olog_buf[TOTAL_BUF_SZ];
+static alignas(TOTAL_BUF_SZ / 2) char olog_buf[TOTAL_BUF_SZ];
 static size_t buf_offset = 0;
 static time_t last_flush_tm = 0;
 static const char *str_of_lvls[] = { "DEBUG", "INFO", "WARNING", "ERROR" };
