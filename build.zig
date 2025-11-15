@@ -6,9 +6,9 @@ const c_src_files = [_][]const u8{
 const c_flags = [_][]const u8{
     "-Wall",
     "-Wextra",
-    "-Werror",
     "-fPIC",
     "-std=c11",
+    "-D_POSIX_C_SOURCE=199309L",
 };
 
 pub fn build(b: *std.Build) void {
