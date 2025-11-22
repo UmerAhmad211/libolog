@@ -1,12 +1,11 @@
 #include <olog.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 int
 main()
 {
 	olog_init_unmanaged(stderr);
-	olog_set_cntxt(info);
+	olog_set_context(info);
 	olog_msg("Hi me umer");
 	olog_msg("Hi %s", "umer");
 	olog_msg("dog %d", 76);

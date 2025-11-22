@@ -10,7 +10,8 @@ log_from_thread(void *thread_id)
 {
 	int id = *((int *)thread_id);
 
-	olog_msg("Logging from thread %d", id);
+	for (int i = 0; i < 3000; ++i)
+		olog_msg("thread %d:%d", id, i);
 
 	pthread_exit(NULL);
 }
