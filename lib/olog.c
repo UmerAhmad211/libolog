@@ -23,7 +23,7 @@
 #define FLUSH_WAIT_TM 10000
 #define FMT_STYLE "[ %s ] %s : %s\n"
 
-static enum Olog_Context curr_lvl = info;
+static enum Olog_Context _Atomic curr_lvl = ATOMIC_VAR_INIT(info);
 static FILE *file = NULL;
 
 static const char *str_of_lvls[] = { "DEBUG", "INFO", "WARNING", "ERROR" };
@@ -181,7 +181,7 @@ olog_close()
 		return;
 
 	atomic_store(&running, 0);
-	pthread_detach(flush_thrd);
+	pthread_join(flush_thrd, NULL);
 	if (file != stdout && file != stderr && !unmanaged)
 		fclose(file);
 }
@@ -189,7 +189,7 @@ olog_close()
 void
 olog_set_context(const enum Olog_Context lvl)
 {
-	curr_lvl = lvl;
+	atomic_store(&curr_lvl, lvl);
 }
 
 void
@@ -201,10 +201,10 @@ olog(const char *fmt, ...)
 	buf_t msg_buf;
 	va_list args;
 	va_start(args, fmt);
-	int fmt_len =
-		vsnprintf(msg_buf.buf,
-			  BUF_LEN - CTIME_SZ - DELIMS_SZ - lvls_lens[curr_lvl],
-			  fmt, args);
+	int fmt_len = vsnprintf(msg_buf.buf,
+				BUF_LEN - CTIME_SZ - DELIMS_SZ -
+					lvls_lens[atomic_load(&curr_lvl)],
+				fmt, args);
 	if (fmt_len <= 0)
 		goto cleanup;
 
@@ -216,8 +216,8 @@ olog(const char *fmt, ...)
 	strftime(time_str, CTIME_SZ, "%a %b %e %T %Y", &tm_info);
 
 	buf_t msg_full_tm;
-	snprintf(msg_full_tm.buf, BUF_LEN, FMT_STYLE, str_of_lvls[curr_lvl],
-		 msg_buf.buf, time_str);
+	snprintf(msg_full_tm.buf, BUF_LEN, FMT_STYLE,
+		 str_of_lvls[atomic_load(&curr_lvl)], msg_buf.buf, time_str);
 
 	lq_enqueue(msg_full_tm.buf);
 
