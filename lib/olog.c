@@ -13,9 +13,12 @@
 #include <signal.h>
 #include <time.h>
 
+#ifndef TOTAL_BUF_SZ
+#define TOTAL_BUF_SZ 8192
+#endif
+
 #define CTIME_SZ 25
 #define DELIMS_SZ 9
-#define TOTAL_BUF_SZ 8192
 #define BUF_LEN 512
 #define FLUSH_WAIT_TM 10000
 #define FMT_STYLE "[ %s ] %s : %s\n"
@@ -34,6 +37,7 @@ static pthread_t flush_thrd;
 
 typedef struct buf_t {
 	char buf[BUF_LEN];
+	atomic_bool has_data;
 } buf_t;
 
 static buf_t qdata[TOTAL_BUF_SZ];
@@ -53,46 +57,52 @@ static struct Lq olog_q = {
 static inline size_t
 next_index(size_t i)
 {
+#if (TOTAL_BUF_SZ & (TOTAL_BUF_SZ - 1)) == 0
 	return (i + 1) & (TOTAL_BUF_SZ - 1);
+#else
+	return (i + 1) & TOTAL_BUF_SZ;
+#endif
 }
 
 static void
 lq_enqueue(const char *buf)
 {
+	struct timespec tm;
+	tm.tv_sec = 0;
+	tm.tv_nsec = FLUSH_WAIT_TM;
+
 	size_t tail;
 	size_t next;
-	size_t head;
 
 	do {
-		tail = atomic_load_explicit(&olog_q.tail, memory_order_relaxed);
-		head = atomic_load_explicit(&olog_q.head, memory_order_acquire);
+		tail = atomic_load(&olog_q.tail);
 		next = next_index(tail);
 
-		if (next ==
-		    atomic_load_explicit(&olog_q.head, memory_order_acquire))
-			atomic_store_explicit(&olog_q.head, next_index(head),
-					      memory_order_release);
+		while (next == atomic_load(&olog_q.head))
+			nanosleep(&tm, NULL);
 
-	} while (!atomic_compare_exchange_strong_explicit(
-		&olog_q.tail, &tail, next, memory_order_release,
-		memory_order_relaxed));
+	} while (!atomic_compare_exchange_strong(&olog_q.tail, &tail, next));
 
-	strncpy(olog_q.qbuf[tail].buf, buf, BUF_LEN);
+	memcpy(olog_q.qbuf[tail].buf, buf, BUF_LEN);
 	olog_q.qbuf[tail].buf[BUF_LEN - 1] = '\0';
+	atomic_store(&olog_q.qbuf[tail].has_data, 1);
 }
 
 static _Bool
 lq_dequeue(buf_t *out)
 {
-	size_t head = atomic_load_explicit(&olog_q.head, memory_order_relaxed);
-	size_t tail = atomic_load_explicit(&olog_q.tail, memory_order_acquire);
+	size_t head = atomic_load(&olog_q.head);
+	size_t tail = atomic_load(&olog_q.tail);
 
 	if (head == tail)
 		return 0;
 
+	while (!atomic_load(&olog_q.qbuf[head].has_data)) {
+	}
+
 	*out = olog_q.qbuf[head];
-	atomic_store_explicit(&olog_q.head, next_index(head),
-			      memory_order_release);
+	atomic_store(&olog_q.qbuf[head].has_data, 0);
+	atomic_store(&olog_q.head, next_index(head));
 	return 1;
 }
 
@@ -106,9 +116,7 @@ olog_flush([[maybe_unused]] void *arg)
 	buf_t buf;
 
 	while (atomic_load(&running)) {
-		while (atomic_load_explicit(&olog_q.head,
-					    memory_order_relaxed) ==
-		       atomic_load_explicit(&olog_q.tail, memory_order_acquire))
+		while (atomic_load(&olog_q.head) == atomic_load(&olog_q.tail))
 			nanosleep(&tm, NULL);
 
 		while (lq_dequeue(&buf))
