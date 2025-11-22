@@ -21,21 +21,33 @@ enum Olog_Context {
 	error,
 };
 
-#define OLOG_FMT(str, fout, stmt, ...)                         \
-	do {                                                   \
-		fprintf(fout, str __VA_OPT__(, ) __VA_ARGS__); \
-		stmt                                           \
-	} while (0)
-
+/**
+ * takes a filename or NULL, if NULL then flushes
+ * to stdout or to filename
+ * handled by callee
+ */
 void
 olog_init(const char *);
 
+/**
+ * takes FILE*, handled by the caller
+ */
 void
 olog_init_unmanaged(FILE *);
 
+/**
+ * sets context.
+ * takes either info, warn, debug or error.
+ * defaults to info
+ */
 void
 olog_set_context(const enum Olog_Context);
 
+/**
+ * olog, takes fmt then var args,
+ * not recommended, use olog_msg or olog_msg_verbose.
+ * verbose includes filename, line no and func name
+ */
 void
 olog(const char *, ...);
 
@@ -44,6 +56,10 @@ olog(const char *, ...);
 	olog("[%s:%d:%s(..)] " fmt, FILENAME, __LINE__, \
 	     __func__ __VA_OPT__(, ) __VA_ARGS__)
 
+/**
+ * automatically called on any kind of exit,
+ * if called more then once then only first one works
+ */
 void
 olog_close();
 
