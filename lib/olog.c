@@ -177,7 +177,7 @@ void
 olog_close()
 {
 	int expected = 0;
-	if (atomic_compare_exchange_strong(&closed, &expected, 1))
+	if (!atomic_compare_exchange_strong(&closed, &expected, 1))
 		return;
 
 	atomic_store(&running, 0);
@@ -195,7 +195,7 @@ olog_set_context(const enum Olog_Context lvl)
 void
 olog(const char *fmt, ...)
 {
-	if (!fmt || !file)
+	if (!fmt || !file || !atomic_load(&running))
 		return;
 
 	buf_t msg_buf;
