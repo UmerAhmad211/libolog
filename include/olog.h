@@ -19,6 +19,7 @@ enum Olog_Context {
 	info,
 	warn,
 	error,
+	use_curr = 11,
 };
 
 /**
@@ -28,12 +29,6 @@ enum Olog_Context {
  */
 void
 olog_init(const char *);
-
-/**
- * takes FILE*, handled by the caller
- */
-void
-olog_init_unmanaged(FILE *);
 
 /**
  * sets context.
