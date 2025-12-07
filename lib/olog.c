@@ -1,6 +1,7 @@
 #include "olog.h"
 
 #include <bits/pthreadtypes.h>
+#include <lz4frame_static.h>
 #include <pthread.h>
 #include <stdalign.h>
 #include <stddef.h>
@@ -12,9 +13,18 @@
 #include <unistd.h>
 #include <signal.h>
 #include <time.h>
+#include <lz4file.h>
 
 #ifndef TOTAL_BUF_SZ
 #define TOTAL_BUF_SZ 8192
+#endif
+
+/*
+ * 2GiB default
+ */
+
+#ifndef COMP_LIMIT
+#define COMP_LIMIT (2L * (1 << 30))
 #endif
 
 #define CTIME_SZ 25
@@ -24,16 +34,20 @@
 #define FMT_STYLE "[ %s ] %s : %s\n"
 
 static enum Olog_Context _Atomic curr_lvl = ATOMIC_VAR_INIT(info);
-static FILE *file = NULL;
+static FILE *file;
+static char olog_fname[BUF_LEN];
 
 static const char *str_of_lvls[] = { "DEBUG", "INFO", "WARNING", "ERROR" };
 static size_t lvls_lens[] = { 5, 4, 7, 5 };
 
-static _Bool unmanaged = 0;
 static atomic_int running = ATOMIC_VAR_INIT(1);
 static atomic_int closed = ATOMIC_VAR_INIT(0);
 
+static size_t bytes_wrtn = 0;
+
 static pthread_t flush_thrd;
+
+static unsigned int comp_fname_gen = 1;
 
 typedef struct buf_t {
 	char buf[BUF_LEN];
@@ -53,6 +67,13 @@ static struct Lq olog_q = {
 	.head = ATOMIC_VAR_INIT(0),
 	.tail = ATOMIC_VAR_INIT(0),
 };
+
+static inline size_t
+olog_strnlen(const char *buf, const size_t maxsz)
+{
+	const char *found = memchr(buf, '\0', maxsz);
+	return found ? (size_t)(found - buf) : maxsz;
+}
 
 static inline size_t
 next_index(size_t i)
@@ -84,7 +105,6 @@ lq_enqueue(const char *buf)
 	} while (!atomic_compare_exchange_strong(&olog_q.tail, &tail, next));
 
 	memcpy(olog_q.qbuf[tail].buf, buf, BUF_LEN);
-	olog_q.qbuf[tail].buf[BUF_LEN - 1] = '\0';
 	atomic_store(&olog_q.qbuf[tail].has_data, 1);
 }
 
@@ -97,8 +117,8 @@ lq_dequeue(buf_t *out)
 	if (head == tail)
 		return 0;
 
-	while (!atomic_load(&olog_q.qbuf[head].has_data)) {
-	}
+	while (!atomic_load(&olog_q.qbuf[head].has_data))
+		;
 
 	*out = olog_q.qbuf[head];
 	atomic_store(&olog_q.qbuf[head].has_data, 0);
@@ -106,9 +126,74 @@ lq_dequeue(buf_t *out)
 	return 1;
 }
 
+#define CHUNK_SZ (128 * (1 << 10))
+
+static void
+olog_compress(void *buf, void *dst_buf)
+{
+	char comp_fname[BUF_LEN];
+
+	if (!buf || !dst_buf) {
+		return;
+	}
+
+	/*
+	 * compressed file always starts with a hex number,
+	 * compression uses lz4frame
+	 */
+
+	snprintf(comp_fname, BUF_LEN, "%x.lz4", comp_fname_gen);
+	++comp_fname_gen;
+
+	LZ4F_compressionContext_t context;
+	size_t err = LZ4F_createCompressionContext(&context, LZ4F_VERSION);
+	if (LZ4F_isError(err))
+		return;
+
+	FILE *comp_fin = fopen(olog_fname, "rb");
+	FILE *comp_fout = fopen(comp_fname, "wb");
+
+	if (!comp_fin || !comp_fout)
+		return;
+
+	LZ4F_preferences_t prefs = { 0 };
+	size_t hdr_sz = LZ4F_compressBegin(context, dst_buf,
+					   LZ4F_HEADER_SIZE_MAX, &prefs);
+	fwrite(dst_buf, 1, hdr_sz, comp_fout);
+
+	size_t read;
+	while ((read = fread(buf, 1, CHUNK_SZ, comp_fin))) {
+		size_t c = LZ4F_compressUpdate(
+			context, dst_buf, LZ4F_compressFrameBound(read, &prefs),
+			buf, read, NULL);
+		fwrite(dst_buf, 1, c, comp_fout);
+	}
+
+	size_t end = LZ4F_compressEnd(context, dst_buf,
+				      LZ4F_compressFrameBound(0, &prefs), NULL);
+	fwrite(dst_buf, 1, end, comp_fout);
+	LZ4F_freeCompressionContext(context);
+
+	fclose(comp_fin);
+	fclose(comp_fout);
+
+	/*
+	 * Reset file after it has been, compressed
+	 */
+
+	fclose(file);
+	file = fopen(olog_fname, "w");
+	bytes_wrtn = 0;
+
+	return;
+}
+
 static void *
 olog_flush([[maybe_unused]] void *arg)
 {
+	void *const src_buf = malloc(CHUNK_SZ);
+	void *const dst_buf = malloc(LZ4F_compressFrameBound(CHUNK_SZ, NULL));
+
 	struct timespec tm;
 	tm.tv_sec = 0;
 	tm.tv_nsec = FLUSH_WAIT_TM;
@@ -119,15 +204,30 @@ olog_flush([[maybe_unused]] void *arg)
 		while (atomic_load(&olog_q.head) == atomic_load(&olog_q.tail))
 			nanosleep(&tm, NULL);
 
-		while (lq_dequeue(&buf))
+		while (lq_dequeue(&buf)) {
+			size_t buflen = olog_strnlen(buf.buf, BUF_LEN);
+			bytes_wrtn += buflen;
 			fputs(buf.buf, file);
-
+		}
 		fflush(file);
-	}
-	while (lq_dequeue(&buf))
-		fputs(buf.buf, file);
 
+		if (bytes_wrtn > COMP_LIMIT && file != stdout)
+			olog_compress(src_buf, dst_buf);
+	}
+
+	while (lq_dequeue(&buf)) {
+		size_t buflen = olog_strnlen(buf.buf, BUF_LEN);
+		bytes_wrtn += buflen;
+		fputs(buf.buf, file);
+	}
+
+	if (bytes_wrtn > COMP_LIMIT && file != stdout)
+		olog_compress(src_buf, dst_buf);
+
+	free(src_buf);
+	free(dst_buf);
 	fflush(file);
+
 	return NULL;
 }
 
@@ -152,20 +252,13 @@ set_sighandle(void)
 void
 olog_init(const char *file_path)
 {
-	if (!(file = fopen(file_path, "w")))
+	if (file_path == NULL)
+		file = stdout;
+	else if (!(file = fopen(file_path, "w")))
 		file = stdout;
 
-	atexit(olog_close);
-	set_sighandle();
-
-	pthread_create(&flush_thrd, NULL, olog_flush, NULL);
-}
-
-void
-olog_init_unmanaged(FILE *filep)
-{
-	file = filep;
-	unmanaged = 1;
+	if (file != stdout)
+		strncpy(olog_fname, file_path, BUF_LEN);
 
 	atexit(olog_close);
 	set_sighandle();
@@ -182,7 +275,8 @@ olog_close()
 
 	atomic_store(&running, 0);
 	pthread_join(flush_thrd, NULL);
-	if (file != stdout && file != stderr && !unmanaged)
+
+	if (file != stdout)
 		fclose(file);
 }
 
@@ -201,11 +295,10 @@ olog(const char *fmt, ...)
 	buf_t msg_buf;
 	va_list args;
 	va_start(args, fmt);
-	int fmt_len = vsnprintf(msg_buf.buf,
-				BUF_LEN - CTIME_SZ - DELIMS_SZ -
-					lvls_lens[atomic_load(&curr_lvl)],
-				fmt, args);
-	if (fmt_len <= 0)
+	if (vsnprintf(msg_buf.buf,
+		      BUF_LEN - CTIME_SZ - DELIMS_SZ -
+			      lvls_lens[atomic_load(&curr_lvl)],
+		      fmt, args) < 0)
 		goto cleanup;
 
 	time_t now = time(NULL);
@@ -213,11 +306,14 @@ olog(const char *fmt, ...)
 	char time_str[CTIME_SZ];
 
 	localtime_r(&now, &tm_info);
-	strftime(time_str, CTIME_SZ, "%a %b %e %T %Y", &tm_info);
+	if (!strftime(time_str, CTIME_SZ, "%a %b %e %T %Y", &tm_info))
+		goto cleanup;
 
 	buf_t msg_full_tm;
-	snprintf(msg_full_tm.buf, BUF_LEN, FMT_STYLE,
-		 str_of_lvls[atomic_load(&curr_lvl)], msg_buf.buf, time_str);
+	if (snprintf(msg_full_tm.buf, BUF_LEN, FMT_STYLE,
+		     str_of_lvls[atomic_load(&curr_lvl)], msg_buf.buf,
+		     time_str) < 0)
+		goto cleanup;
 
 	lq_enqueue(msg_full_tm.buf);
 
