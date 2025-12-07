@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
 
     libolog.addIncludePath(b.path("include/"));
     libolog.root_module.linkSystemLibrary("pthread", .{});
+    libolog.root_module.linkSystemLibrary("lz4", .{});
     libolog.installHeader(b.path("include/olog.h"), "olog.h");
     libolog.root_module.addCSourceFiles(.{
         .files = &c_src_files,
