@@ -1,7 +1,6 @@
 #include "olog.h"
 
 #include <bits/pthreadtypes.h>
-#include <lz4frame_static.h>
 #include <pthread.h>
 #include <stdalign.h>
 #include <stddef.h>
@@ -20,11 +19,11 @@
 #endif
 
 /*
- * 2GiB default
+ * 256MiB default
  */
 
 #ifndef COMP_LIMIT
-#define COMP_LIMIT (2L * (1 << 30))
+#define COMP_LIMIT (256 * (1 << 20))
 #endif
 
 #define CTIME_SZ 25
@@ -178,7 +177,7 @@ olog_compress(void *buf, void *dst_buf)
 	fclose(comp_fout);
 
 	/*
-	 * Reset file after it has been, compressed
+	 * reset file after it has been compressed
 	 */
 
 	fclose(file);
