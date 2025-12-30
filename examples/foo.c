@@ -4,7 +4,7 @@
 int
 main()
 {
-	olog_init_unmanaged(stderr);
+	olog_init(NULL);
 	olog_set_context(info);
 	olog_msg("Hi me umer");
 	olog_msg("Hi %s", "umer");

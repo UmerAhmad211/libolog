@@ -40,6 +40,7 @@ main()
 
 	olog_msg("Multithreaded logging finished");
 	olog_close();
+	olog_msg("this should not be shown");
 
 	return 0;
 }
