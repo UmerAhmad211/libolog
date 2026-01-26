@@ -19,7 +19,6 @@ enum Olog_Context {
 	info,
 	warn,
 	error,
-	use_curr = 11,
 };
 
 /**
