@@ -32,6 +32,19 @@
 #define FLUSH_WAIT_TM 10000
 #define FMT_STYLE "[ %s ] %s : %s\n"
 
+#define olog_queue_flush                                                \
+	do {                                                            \
+		while (lq_dequeue(&buf)) {                              \
+			size_t buflen = olog_strnlen(buf.buf, BUF_LEN); \
+			bytes_wrtn += buflen;                           \
+			fputs(buf.buf, file);                           \
+		}                                                       \
+		fflush(file);                                           \
+                                                                        \
+		if (bytes_wrtn > COMP_LIMIT && file != stdout)          \
+			olog_compress(src_buf, dst_buf);                \
+	} while (0)
+
 static enum Olog_Context _Atomic curr_lvl = ATOMIC_VAR_INIT(info);
 static FILE *file;
 static char olog_fname[BUF_LEN];
@@ -203,29 +216,13 @@ olog_flush([[maybe_unused]] void *arg)
 		while (atomic_load(&olog_q.head) == atomic_load(&olog_q.tail))
 			nanosleep(&tm, NULL);
 
-		while (lq_dequeue(&buf)) {
-			size_t buflen = olog_strnlen(buf.buf, BUF_LEN);
-			bytes_wrtn += buflen;
-			fputs(buf.buf, file);
-		}
-		fflush(file);
-
-		if (bytes_wrtn > COMP_LIMIT && file != stdout)
-			olog_compress(src_buf, dst_buf);
+		olog_queue_flush;
 	}
 
-	while (lq_dequeue(&buf)) {
-		size_t buflen = olog_strnlen(buf.buf, BUF_LEN);
-		bytes_wrtn += buflen;
-		fputs(buf.buf, file);
-	}
-
-	if (bytes_wrtn > COMP_LIMIT && file != stdout)
-		olog_compress(src_buf, dst_buf);
+	olog_queue_flush;
 
 	free(src_buf);
 	free(dst_buf);
-	fflush(file);
 
 	return NULL;
 }
