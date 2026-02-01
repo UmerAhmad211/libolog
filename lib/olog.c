@@ -93,7 +93,7 @@ next_index(size_t i)
 #if (TOTAL_BUF_SZ & (TOTAL_BUF_SZ - 1)) == 0
 	return (i + 1) & (TOTAL_BUF_SZ - 1);
 #else
-	return (i + 1) & TOTAL_BUF_SZ;
+	return (i + 1) % TOTAL_BUF_SZ;
 #endif
 }
 
@@ -165,8 +165,11 @@ olog_compress(void *buf, void *dst_buf)
 	FILE *comp_fin = fopen(olog_fname, "rb");
 	FILE *comp_fout = fopen(comp_fname, "wb");
 
-	if (!comp_fin || !comp_fout)
+	if (!comp_fin || !comp_fout) {
+		fclose(comp_fin);
+		fclose(comp_fout);
 		return;
+	}
 
 	LZ4F_preferences_t prefs = { 0 };
 	size_t hdr_sz = LZ4F_compressBegin(context, dst_buf,
